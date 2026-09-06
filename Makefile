@@ -9,7 +9,7 @@ WAYLAND_SCANNER ?= wayland-scanner
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 
-PKGS = wayland-client cairo pango pangocairo
+PKGS = wayland-client freetype2 fontconfig
 BAR_CFLAGS != $(PKG_CONFIG) --cflags $(PKGS)
 BAR_LIBS != $(PKG_CONFIG) --libs $(PKGS)
 

@@ -24,8 +24,10 @@ static const char *color_active_ws   = "#89b4fa"; /* Active workspace highlight 
 static const char *color_inactive_ws = "#6c7086"; /* Inactive workspace color */
 
 /* Workspace options */
-static const char *ws_prefix = ""; /* Default text/markup before workspaces (e.g. "WS: " or "[") */
-static const char *ws_suffix = ""; /* Default text/markup after workspaces (e.g. " |" or "]") */
+static const char *ws_prefix       = "";   /* Default text before workspaces (e.g. "WS: " or "[") */
+static const char *ws_prefix_color = NULL; /* Default color for ws_prefix (NULL = color_fg) */
+static const char *ws_suffix       = "";   /* Default text after workspaces (e.g. " |" or "]") */
+static const char *ws_suffix_color = NULL; /* Default color for ws_suffix (NULL = color_fg) */
 
 /* Update intervals (milliseconds) */
 static const int status_interval_ms = 1000; /* Interval for BLOCK_COMMAND execution */
@@ -50,11 +52,14 @@ enum block_type {
 
 struct BarBlock {
 	enum block_type type;
-	const char *command_or_text; /* Used for BLOCK_COMMAND, BLOCK_STATIC, or format/prefix for BLOCK_WORKSPACES */
-	const char *custom_color;    /* Custom text color, or NULL to use color_fg */
-	const char *prefix;          /* Text/markup before block (or NULL to use ws_prefix for workspaces) */
-	const char *suffix;          /* Text/markup after block (or NULL to use ws_suffix for workspaces) */
+	const char *command_or_text; /* Used for BLOCK_COMMAND, BLOCK_STATIC */
+	const char *color;           /* Custom text color, or NULL to use color_fg */
+	const char *prefix;          /* Text before block */
+	const char *prefix_color;    /* Color for prefix (NULL to use color) */
+	const char *suffix;          /* Text after block */
+	const char *suffix_color;    /* Color for suffix (NULL to use color) */
 };
+#define custom_color color
 
 /*
  * Configuration of the three bar sections:
@@ -62,13 +67,12 @@ struct BarBlock {
  * Middle: Active window title
  * Right:  Output of the command "ssstatus"
  *
- * For BLOCK_WORKSPACES, text before and after the workspaces can be customized
- * either globally via ws_prefix and ws_suffix, or per-block via prefix and suffix:
- *   e.g. { BLOCK_WORKSPACES, NULL, NULL, "WS: ", " |" }
- * Pango markup is supported in prefix and suffix strings (e.g. "<span foreground='#89b4fa'>WS:</span> ").
+ * Each block can specify prefix, prefix_color, suffix, and suffix_color.
+ * For minimal inline coloring in commands or text, suckless status2d syntax
+ * is supported: ^#RRGGBB^text^d^ or ^c#RRGGBB^text^d^ (^d^ or ^^ resets color).
  */
-static const struct BarBlock left_block   = { BLOCK_WORKSPACES, NULL, NULL, NULL, NULL };
-static const struct BarBlock middle_block = { BLOCK_TITLE,      NULL, NULL, NULL, NULL };
-static const struct BarBlock right_block  = { BLOCK_COMMAND,    "ssstatus", NULL, NULL, NULL };
+static const struct BarBlock left_block   = { .type = BLOCK_WORKSPACES };
+static const struct BarBlock middle_block = { .type = BLOCK_TITLE };
+static const struct BarBlock right_block  = { .type = BLOCK_COMMAND, .command_or_text = "ssstatus" };
 
 #endif /* BAR_CONFIG_H */
