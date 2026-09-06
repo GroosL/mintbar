@@ -20,6 +20,7 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include <cairo.h>
 #include <pango/pangocairo.h>
+#include <glib.h>
 
 #include "config.h"
 
@@ -263,6 +264,10 @@ static void update_state_blocks(unsigned int ws, const char *title, bool *change
 		strcpy(bar.middle_text, ws_str);
 		*changed = true;
 	}
+	if (right_block.type == BLOCK_WORKSPACES && strcmp(bar.right_text, ws_str) != 0) {
+		strcpy(bar.right_text, ws_str);
+		*changed = true;
+	}
 	if (left_block.type == BLOCK_TITLE && strcmp(bar.left_text, title) != 0) {
 		strncpy(bar.left_text, title, sizeof(bar.left_text) - 1);
 		bar.left_text[sizeof(bar.left_text) - 1] = '\0';
@@ -271,6 +276,11 @@ static void update_state_blocks(unsigned int ws, const char *title, bool *change
 	if (middle_block.type == BLOCK_TITLE && strcmp(bar.middle_text, title) != 0) {
 		strncpy(bar.middle_text, title, sizeof(bar.middle_text) - 1);
 		bar.middle_text[sizeof(bar.middle_text) - 1] = '\0';
+		*changed = true;
+	}
+	if (right_block.type == BLOCK_TITLE && strcmp(bar.right_text, title) != 0) {
+		strncpy(bar.right_text, title, sizeof(bar.right_text) - 1);
+		bar.right_text[sizeof(bar.right_text) - 1] = '\0';
 		*changed = true;
 	}
 }
@@ -381,10 +391,80 @@ static struct bar_buffer *get_next_buffer(int width, int height) {
 	return NULL;
 }
 
-/* Workspaces markup formatter: highlights active workspace inside [] */
-static void format_workspaces_markup(const char *raw, char *out, size_t out_size) {
+static void get_block_prefix_suffix(const struct BarBlock *blk,
+                                    const char **out_prefix,
+                                    const char **out_suffix,
+                                    char *buf_pfx, size_t buf_pfx_size,
+                                    char *buf_sfx, size_t buf_sfx_size) {
+	*out_prefix = NULL;
+	*out_suffix = NULL;
+
+	if (blk->type == BLOCK_WORKSPACES) {
+		*out_prefix = ws_prefix;
+		*out_suffix = ws_suffix;
+	}
+
+	if (blk->command_or_text && blk->type == BLOCK_WORKSPACES) {
+		const char *fmt = strstr(blk->command_or_text, "%s");
+		if (fmt) {
+			size_t pfx_len = (size_t)(fmt - blk->command_or_text);
+			if (pfx_len >= buf_pfx_size) pfx_len = buf_pfx_size - 1;
+			strncpy(buf_pfx, blk->command_or_text, pfx_len);
+			buf_pfx[pfx_len] = '\0';
+			*out_prefix = buf_pfx;
+
+			strncpy(buf_sfx, fmt + 2, buf_sfx_size - 1);
+			buf_sfx[buf_sfx_size - 1] = '\0';
+			*out_suffix = buf_sfx;
+		} else {
+			*out_prefix = blk->command_or_text;
+		}
+	}
+
+	if (blk->prefix) {
+		*out_prefix = blk->prefix;
+	}
+	if (blk->suffix) {
+		*out_suffix = blk->suffix;
+	}
+}
+
+static void append_markup_segment(char *out, size_t out_size, const char *str, const char *color) {
+	if (!str || str[0] == '\0') return;
+
+	char *to_insert = NULL;
+	if (pango_parse_markup(str, -1, 0, NULL, NULL, NULL, NULL)) {
+		to_insert = g_strdup(str);
+	} else {
+		to_insert = g_markup_escape_text(str, -1);
+	}
+
+	char *wrapped = g_strdup_printf("<span foreground=\"%s\">%s</span>",
+		color ? color : color_fg, to_insert);
+	g_free(to_insert);
+
+	size_t cur_len = strlen(out);
+	if (cur_len < out_size - 1) {
+		strncat(out, wrapped, out_size - cur_len - 1);
+	}
+	g_free(wrapped);
+}
+
+/* Workspaces markup formatter: highlights active workspace inside [] and applies prefix/suffix */
+static void format_workspaces_markup(const struct BarBlock *blk, const char *raw, char *out, size_t out_size) {
 	out[0] = '\0';
 	if (!raw || raw[0] == '\0') return;
+
+	char pfx_buf[256] = "";
+	char sfx_buf[256] = "";
+	const char *prefix = NULL;
+	const char *suffix = NULL;
+	get_block_prefix_suffix(blk, &prefix, &suffix, pfx_buf, sizeof(pfx_buf), sfx_buf, sizeof(sfx_buf));
+	const char *fg_color = (blk && blk->custom_color) ? blk->custom_color : color_fg;
+
+	if (prefix && prefix[0] != '\0') {
+		append_markup_segment(out, out_size, prefix, fg_color);
+	}
 
 	char copy[512];
 	strncpy(copy, raw, sizeof(copy) - 1);
@@ -410,6 +490,46 @@ static void format_workspaces_markup(const char *raw, char *out, size_t out_size
 		}
 		strncat(out, part, out_size - strlen(out) - 1);
 		token = strtok_r(NULL, " ", &saveptr);
+	}
+
+	if (suffix && suffix[0] != '\0') {
+		append_markup_segment(out, out_size, suffix, fg_color);
+	}
+}
+
+static void setup_block_layout(PangoLayout *layout, const struct BarBlock *blk,
+                               const char *raw_text, cairo_t *cr,
+                               double default_fg_r, double default_fg_g,
+                               double default_fg_b, double default_fg_a) {
+	if (blk->custom_color) {
+		double r, g, b, a;
+		parse_color(blk->custom_color, &r, &g, &b, &a);
+		cairo_set_source_rgba(cr, r, g, b, a);
+	} else {
+		cairo_set_source_rgba(cr, default_fg_r, default_fg_g, default_fg_b, default_fg_a);
+	}
+
+	if (blk->type == BLOCK_WORKSPACES) {
+		char markup[2048];
+		format_workspaces_markup(blk, raw_text, markup, sizeof(markup));
+		pango_layout_set_markup(layout, markup, -1);
+	} else {
+		char pfx_buf[256] = "";
+		char sfx_buf[256] = "";
+		const char *prefix = NULL;
+		const char *suffix = NULL;
+		get_block_prefix_suffix(blk, &prefix, &suffix, pfx_buf, sizeof(pfx_buf), sfx_buf, sizeof(sfx_buf));
+
+		if ((prefix && prefix[0] != '\0') || (suffix && suffix[0] != '\0')) {
+			char buf[1024];
+			snprintf(buf, sizeof(buf), "%s%s%s",
+				prefix ? prefix : "",
+				raw_text ? raw_text : "",
+				suffix ? suffix : "");
+			pango_layout_set_text(layout, buf, -1);
+		} else {
+			pango_layout_set_text(layout, raw_text ? raw_text : "", -1);
+		}
 	}
 }
 
@@ -445,21 +565,7 @@ static void render_bar(void) {
 	/* 1. Render Left Block with dedicated layout */
 	PangoLayout *layout_left = pango_cairo_create_layout(cr);
 	pango_layout_set_font_description(layout_left, font_desc);
-
-	if (left_block.type == BLOCK_WORKSPACES) {
-		char markup[1024];
-		format_workspaces_markup(bar.left_text, markup, sizeof(markup));
-		pango_layout_set_markup(layout_left, markup, -1);
-	} else {
-		if (left_block.custom_color) {
-			double r, g, b, a;
-			parse_color(left_block.custom_color, &r, &g, &b, &a);
-			cairo_set_source_rgba(cr, r, g, b, a);
-		} else {
-			cairo_set_source_rgba(cr, fg_r, fg_g, fg_b, fg_a);
-		}
-		pango_layout_set_text(layout_left, bar.left_text, -1);
-	}
+	setup_block_layout(layout_left, &left_block, bar.left_text, cr, fg_r, fg_g, fg_b, fg_a);
 	pango_layout_get_pixel_size(layout_left, &left_w, &left_h);
 	cairo_move_to(cr, padding_x, (bar.height - left_h) / 2);
 	pango_cairo_show_layout(cr, layout_left);
@@ -468,15 +574,7 @@ static void render_bar(void) {
 	/* 2. Render Right Block with dedicated layout */
 	PangoLayout *layout_right = pango_cairo_create_layout(cr);
 	pango_layout_set_font_description(layout_right, font_desc);
-
-	if (right_block.custom_color) {
-		double r, g, b, a;
-		parse_color(right_block.custom_color, &r, &g, &b, &a);
-		cairo_set_source_rgba(cr, r, g, b, a);
-	} else {
-		cairo_set_source_rgba(cr, fg_r, fg_g, fg_b, fg_a);
-	}
-	pango_layout_set_text(layout_right, bar.right_text, -1);
+	setup_block_layout(layout_right, &right_block, bar.right_text, cr, fg_r, fg_g, fg_b, fg_a);
 	pango_layout_get_pixel_size(layout_right, &right_w, &right_h);
 
 	int right_x = bar.width - right_w - padding_x;
@@ -490,16 +588,7 @@ static void render_bar(void) {
 	/* 3. Render Middle Block with dedicated layout (centered, ellipsized if needed) */
 	PangoLayout *layout_mid = pango_cairo_create_layout(cr);
 	pango_layout_set_font_description(layout_mid, font_desc);
-
-	if (middle_block.custom_color) {
-		double r, g, b, a;
-		parse_color(middle_block.custom_color, &r, &g, &b, &a);
-		cairo_set_source_rgba(cr, r, g, b, a);
-	} else {
-		cairo_set_source_rgba(cr, fg_r, fg_g, fg_b, fg_a);
-	}
-
-	pango_layout_set_text(layout_mid, bar.middle_text, -1);
+	setup_block_layout(layout_mid, &middle_block, bar.middle_text, cr, fg_r, fg_g, fg_b, fg_a);
 	pango_layout_set_ellipsize(layout_mid, PANGO_ELLIPSIZE_END);
 
 	int max_mid_w = right_x - (padding_x + left_w + 20);
