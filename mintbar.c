@@ -805,6 +805,8 @@ static int draw_text(struct bar_buffer *buf, FT_Face primary_face,
 					int py = dst_y + dy;
 					if (px < 0 || px >= buf_w || py < 0 || py >= buf_h)
 						continue;
+					if (max_w > 0 && (px - start_x >= max_w))
+						continue;
 
 					uint8_t *src = slot->bitmap.buffer + (sy * slot->bitmap.pitch + sx * 4);
 					uint8_t b = src[0];
@@ -844,6 +846,8 @@ static int draw_text(struct bar_buffer *buf, FT_Face primary_face,
 					int px = gx + (int)col;
 					int py = gy + (int)row;
 					if (px < 0 || px >= buf_w || py < 0 || py >= buf_h)
+						continue;
+					if (max_w > 0 && (px - start_x >= max_w))
 						continue;
 
 					uint8_t alpha = 0;
@@ -894,7 +898,8 @@ static int draw_text_ellipsized(struct bar_buffer *buf, FT_Face primary_face,
 	}
 
 	int cur_x = draw_text(buf, primary_face, text, x, baseline_y, color, avail_w);
-	return draw_text(buf, primary_face, "...", cur_x, baseline_y, color, -1);
+	int rem_w = max_w - (cur_x - x);
+	return draw_text(buf, primary_face, "...", cur_x, baseline_y, color, rem_w > 0 ? rem_w : 0);
 }
 
 static int get_block_width(FT_Face primary_face, const struct BarBlock *blk, const char *raw_text) {
@@ -958,15 +963,21 @@ static int render_block(struct bar_buffer *buf, FT_Face primary_face, const stru
 	const char *sfx_col = NULL;
 	get_block_prefix_suffix(blk, &prefix, &suffix, &pfx_col, &sfx_col, pfx_buf, sizeof(pfx_buf), sfx_buf, sizeof(sfx_buf));
 
+	int start_x = x;
+	int end_x = (max_w > 0) ? (start_x + max_w) : -1;
+
 	if (blk->type == BLOCK_WORKSPACES) {
 		if (prefix && prefix[0] != '\0') {
-			x = draw_text(buf, primary_face, prefix, x, baseline_y, pfx_color, max_w);
+			int rem = (end_x > 0) ? (end_x - x) : -1;
+			if (rem > 0 || end_x < 0)
+				x = draw_text(buf, primary_face, prefix, x, baseline_y, pfx_color, rem);
 		}
 
 		const char *p = raw_text;
 		bool first = true;
 
 		while (*p) {
+			if (end_x > 0 && x >= end_x) break;
 			while (*p == ' ') p++;
 			if (!*p) break;
 			const char *tok_start = p;
@@ -979,28 +990,37 @@ static int render_block(struct bar_buffer *buf, FT_Face primary_face, const stru
 			tok[tok_len] = '\0';
 
 			if (!first) {
-				x = draw_text(buf, primary_face, "  ", x, baseline_y, theme.inactive_ws, max_w);
+				int rem = (end_x > 0) ? (end_x - x) : -1;
+				if (rem <= 0 && end_x > 0) break;
+				x = draw_text(buf, primary_face, "  ", x, baseline_y, theme.inactive_ws, rem);
 			}
 			first = false;
 
+			int rem = (end_x > 0) ? (end_x - x) : -1;
+			if (rem <= 0 && end_x > 0) break;
 			uint32_t col = (tok[0] == '[' && tok[tok_len - 1] == ']') ? theme.active_ws : theme.inactive_ws;
-			x = draw_text(buf, primary_face, tok, x, baseline_y, col, max_w);
+			x = draw_text(buf, primary_face, tok, x, baseline_y, col, rem);
 		}
 
 		if (suffix && suffix[0] != '\0') {
-			x = draw_text(buf, primary_face, suffix, x, baseline_y, sfx_color, max_w);
+			int rem = (end_x > 0) ? (end_x - x) : -1;
+			if (rem > 0 || end_x < 0)
+				x = draw_text(buf, primary_face, suffix, x, baseline_y, sfx_color, rem);
 		}
 	} else {
 		int pfx_w = (prefix && prefix[0] != '\0') ? measure_text_width(primary_face, prefix) : 0;
 		int sfx_w = (suffix && suffix[0] != '\0') ? measure_text_width(primary_face, suffix) : 0;
 
 		if (prefix && prefix[0] != '\0') {
-			x = draw_text(buf, primary_face, prefix, x, baseline_y, pfx_color, max_w);
+			int rem = (end_x > 0) ? (end_x - x) : -1;
+			if (rem > 0 || end_x < 0)
+				x = draw_text(buf, primary_face, prefix, x, baseline_y, pfx_color, rem);
 		}
 
 		if (raw_text && raw_text[0] != '\0') {
-			if (max_w > 0) {
-				int text_max_w = max_w - pfx_w - sfx_w;
+			if (end_x > 0) {
+				int rem = end_x - x;
+				int text_max_w = rem - sfx_w;
 				if (text_max_w < 0) text_max_w = 0;
 				x = draw_text_ellipsized(buf, primary_face, raw_text, x, baseline_y, fg_color, text_max_w);
 			} else {
@@ -1009,7 +1029,9 @@ static int render_block(struct bar_buffer *buf, FT_Face primary_face, const stru
 		}
 
 		if (suffix && suffix[0] != '\0') {
-			x = draw_text(buf, primary_face, suffix, x, baseline_y, sfx_color, max_w);
+			int rem = (end_x > 0) ? (end_x - x) : -1;
+			if (rem > 0 || end_x < 0)
+				x = draw_text(buf, primary_face, suffix, x, baseline_y, sfx_color, rem);
 		}
 	}
 	return x;
@@ -1052,15 +1074,24 @@ static void render_bar(void) {
 	             theme.right_pfx, theme.right_fg, theme.right_sfx);
 
 	/* 3. Render Middle Block (centered, ellipsized if needed) */
-	int max_mid_w = right_x - (padding_x + left_w + 20);
-	if (max_mid_w > 0) {
+	int mid_left_limit = (left_w > 0) ? (left_end_x + padding_x) : padding_x;
+	int mid_right_limit = (right_w > 0) ? (right_x - padding_x) : (bar.width - padding_x);
+	int max_avail_w = mid_right_limit - mid_left_limit;
+
+	if (max_avail_w > 0) {
 		int mid_w = get_block_width(primary_face, &middle_block, bar.middle_text);
 		int mid_x = (bar.width - mid_w) / 2;
-		if (mid_x < padding_x + left_w + 10) {
-			mid_x = padding_x + left_w + 10;
+		if (mid_x + mid_w > mid_right_limit) {
+			mid_x = mid_right_limit - mid_w;
 		}
-		render_block(buf, primary_face, &middle_block, bar.middle_text, mid_x, baseline_y, max_mid_w,
-		             theme.mid_pfx, theme.mid_fg, theme.mid_sfx);
+		if (mid_x < mid_left_limit) {
+			mid_x = mid_left_limit;
+		}
+		int max_mid_w = mid_right_limit - mid_x;
+		if (max_mid_w > 0) {
+			render_block(buf, primary_face, &middle_block, bar.middle_text, mid_x, baseline_y, max_mid_w,
+			             theme.mid_pfx, theme.mid_fg, theme.mid_sfx);
+		}
 	}
 
 	wl_surface_attach(bar.surface, buf->wl_buffer, 0, 0);
