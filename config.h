@@ -19,9 +19,9 @@ static const char *font_name = "monospace 10";
 
 /* Colors (Hex: #RGB, #RRGGBB, or #RRGGBBAA) */
 static const char *color_bg          = "#212337"; /* Bar background */
-static const char *color_fg          = "#5b5c66"; /* Default text color */
-static const char *color_active_ws   = "#f7c67f"; /* Active workspace highlight */
-static const char *color_inactive_ws = "#323449"; /* Inactive workspace color */
+static const char *color_fg          = "#ebfafa"; /* Default text color */
+static const char *color_active_ws   = "#7081d0"; /* Active workspace highlight */
+static const char *color_inactive_ws = "#5b5c66"; /* Inactive workspace color */
 
 /* Workspace options */
 static const char *ws_prefix       = "";   /* Default text before workspaces (e.g. "WS: " or "[") */
@@ -74,9 +74,10 @@ struct BarBlock {
 static const struct BarBlock left_block   = {
 	.type = BLOCK_WORKSPACES,
 	.suffix = "   [MinTwm]",
-	.suffix_color = "#50FA7B",
+	.suffix_color = "#37f499",
 };
 static const struct BarBlock middle_block = {
+  .color = "#a48cf2",
 	.type = BLOCK_TITLE,
 };
 static const struct BarBlock right_block  = {
