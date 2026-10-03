@@ -1,6 +1,7 @@
 mintbar
 mintbar.o
 bar-config.h
+config.h
 xdg-shell-protocol.c
 wlr-layer-shell-unstable-v1-client-protocol.h
 wlr-layer-shell-unstable-v1-protocol.c

@@ -18,10 +18,10 @@ static const bool bar_bottom = false; /* false = top of screen, true = bottom */
 static const char *font_name = "monospace 10";
 
 /* Colors (Hex: #RGB, #RRGGBB, or #RRGGBBAA) */
-static const char *color_bg          = "#1e1e2e"; /* Bar background */
-static const char *color_fg          = "#cdd6f4"; /* Default text color */
-static const char *color_active_ws   = "#89b4fa"; /* Active workspace highlight */
-static const char *color_inactive_ws = "#6c7086"; /* Inactive workspace color */
+static const char *color_bg          = "#212337"; /* Bar background */
+static const char *color_fg          = "#5b5c66"; /* Default text color */
+static const char *color_active_ws   = "#f7c67f"; /* Active workspace highlight */
+static const char *color_inactive_ws = "#323449"; /* Inactive workspace color */
 
 /* Workspace options */
 static const char *ws_prefix       = "";   /* Default text before workspaces (e.g. "WS: " or "[") */
